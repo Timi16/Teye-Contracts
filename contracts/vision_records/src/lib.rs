@@ -9,7 +9,9 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, Env, String, Symbol, Vec,
 };
 
-pub use errors::{ContractError, ErrorCategory, ErrorLogEntry, ErrorSeverity};
+pub use errors::{
+    create_error_context, log_error, ContractError, ErrorCategory, ErrorLogEntry, ErrorSeverity,
+};
 pub use provider::{Certification, License, Location, Provider, VerificationStatus};
 
 /// Storage keys for the contract
@@ -162,13 +164,13 @@ impl VisionRecordsContract {
 
         if !rbac::has_permission(&env, &caller, &Permission::ManageUsers) {
             let resource_id = String::from_str(&env, "register_user");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::Unauthorized,
                 Some(caller.clone()),
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::Unauthorized,
                 Some(caller),
@@ -209,13 +211,13 @@ impl VisionRecordsContract {
             Ok(user_data)
         } else {
             let resource_id = String::from_str(&env, "get_user");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::UserNotFound,
                 Some(user.clone()),
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::UserNotFound,
                 Some(user),
@@ -293,13 +295,13 @@ impl VisionRecordsContract {
             Ok(record)
         } else {
             let resource_id = String::from_str(&env, "get_record");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::RecordNotFound,
                 None,
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::RecordNotFound,
                 None,
@@ -479,13 +481,13 @@ impl VisionRecordsContract {
 
         if provider::get_provider(&env, &provider).is_some() {
             let resource_id = String::from_str(&env, "register_provider");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::ProviderAlreadyRegistered,
                 Some(caller.clone()),
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::ProviderAlreadyRegistered,
                 Some(caller),
@@ -554,6 +556,7 @@ impl VisionRecordsContract {
         provider_data.verified_at = Some(env.ledger().timestamp());
         provider_data.verified_by = Some(caller.clone());
 
+        // Status index is updated automatically in set_provider
         provider::set_provider(&env, &provider_data);
 
         events::publish_provider_verified(&env, provider, caller, status);
@@ -623,13 +626,13 @@ impl VisionRecordsContract {
             Ok(provider_data)
         } else {
             let resource_id = String::from_str(&env, "get_provider");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::ProviderNotFound,
                 Some(provider.clone()),
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::ProviderNotFound,
                 Some(provider),
@@ -649,25 +652,9 @@ impl VisionRecordsContract {
 
     /// Searches for providers by verification status.
     /// Returns a vector of active provider addresses with the specified verification status.
+    /// Uses an efficient status index to avoid exceeding Soroban's 100-key limit.
     pub fn search_providers_by_status(env: Env, status: VerificationStatus) -> Vec<Address> {
-        let all_ids = provider::get_all_provider_ids(&env);
-        let mut result = Vec::new(&env);
-
-        for i in 0..all_ids.len() {
-            if let Some(id) = all_ids.get(i) {
-                if let Some(provider_addr) = Self::get_provider_address_by_id(&env, id) {
-                    if let Ok(provider_data) =
-                        Self::get_provider(env.clone(), provider_addr.clone())
-                    {
-                        if provider_data.verification_status == status && provider_data.is_active {
-                            result.push_back(provider_addr);
-                        }
-                    }
-                }
-            }
-        }
-
-        result
+        provider::get_providers_by_status(&env, &status)
     }
 
     /// Returns the total number of registered providers in the system.
@@ -677,6 +664,7 @@ impl VisionRecordsContract {
 
     /// Retrieves a provider address by provider ID.
     /// Returns None if the provider ID does not exist.
+    #[allow(dead_code)]
     fn get_provider_address_by_id(env: &Env, provider_id: u64) -> Option<Address> {
         let id_key = (symbol_short!("PROV_ID"), provider_id);
         env.storage().persistent().get(&id_key)
@@ -699,13 +687,13 @@ impl VisionRecordsContract {
         caller.require_auth();
         if !rbac::has_permission(&env, &caller, &Permission::SystemAdmin) {
             let resource_id = String::from_str(&env, "clear_error_log");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::Unauthorized,
                 Some(caller.clone()),
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::Unauthorized,
                 Some(caller),
@@ -730,13 +718,13 @@ impl VisionRecordsContract {
     ) -> Result<bool, ContractError> {
         if max_retries == 0 || max_retries > 10 {
             let resource_id = String::from_str(&env, "retry_operation");
-            let context = errors::create_error_context(
+            let context = create_error_context(
                 &env,
                 ContractError::InvalidInput,
                 Some(caller.clone()),
                 Some(resource_id.clone()),
             );
-            errors::log_error(
+            log_error(
                 &env,
                 ContractError::InvalidInput,
                 Some(caller),

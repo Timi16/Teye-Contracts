@@ -22,6 +22,12 @@ fn extend_ttl_u64_key(env: &Env, key: &(soroban_sdk::Symbol, u64)) {
         .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
+fn extend_ttl_status_key(env: &Env, key: &(soroban_sdk::Symbol, VerificationStatus)) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
 #[contracttype]
 #[derive(Clone, Debug, Eq, PartialEq)]
 #[repr(u32)]
@@ -87,6 +93,10 @@ pub fn specialty_index_key(specialty: &String) -> (soroban_sdk::Symbol, String) 
     (symbol_short!("SPEC_IDX"), specialty.clone())
 }
 
+pub fn status_index_key(status: &VerificationStatus) -> (soroban_sdk::Symbol, VerificationStatus) {
+    (symbol_short!("STAT_IDX"), status.clone())
+}
+
 pub fn get_provider(env: &Env, provider: &Address) -> Option<Provider> {
     let key = provider_key(provider);
     env.storage().persistent().get(&key)
@@ -94,8 +104,30 @@ pub fn get_provider(env: &Env, provider: &Address) -> Option<Provider> {
 
 pub fn set_provider(env: &Env, provider: &Provider) {
     let key = provider_key(&provider.address);
+
+    // Get old provider to update status index if status changed
+    let old_provider = get_provider(env, &provider.address);
+
     env.storage().persistent().set(&key, provider);
     extend_ttl(env, &key);
+
+    // Update status index
+    if let Some(old) = old_provider {
+        // Remove from old status index if status or active state changed
+        if old.verification_status != provider.verification_status
+            || old.is_active != provider.is_active
+        {
+            remove_provider_from_status_index(env, &old.verification_status, &provider.address);
+        }
+    }
+
+    // Add to new status index if active
+    if provider.is_active {
+        add_provider_to_status_index(env, &provider.verification_status, &provider.address);
+    } else {
+        // Remove from status index if provider is inactive
+        remove_provider_from_status_index(env, &provider.verification_status, &provider.address);
+    }
 }
 
 pub fn add_provider_to_specialty_index(env: &Env, specialty: &String, provider: &Address) {
@@ -134,6 +166,52 @@ pub fn remove_provider_from_specialty_index(env: &Env, specialty: &String, provi
 
 pub fn get_providers_by_specialty(env: &Env, specialty: &String) -> Vec<Address> {
     let key = specialty_index_key(specialty);
+    env.storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env))
+}
+
+pub fn add_provider_to_status_index(env: &Env, status: &VerificationStatus, provider: &Address) {
+    let key = status_index_key(status);
+    let mut providers: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&key)
+        .unwrap_or(Vec::new(env));
+    if !providers.contains(provider) {
+        providers.push_back(provider.clone());
+    }
+    env.storage().persistent().set(&key, &providers);
+    extend_ttl_status_key(env, &key);
+}
+
+pub fn remove_provider_from_status_index(
+    env: &Env,
+    status: &VerificationStatus,
+    provider: &Address,
+) {
+    let key = status_index_key(status);
+    if let Some(providers) = env.storage().persistent().get::<_, Vec<Address>>(&key) {
+        let mut new_providers = Vec::new(env);
+        for i in 0..providers.len() {
+            if let Some(p) = providers.get(i) {
+                if p != *provider {
+                    new_providers.push_back(p);
+                }
+            }
+        }
+        if !new_providers.is_empty() {
+            env.storage().persistent().set(&key, &new_providers);
+            extend_ttl_status_key(env, &key);
+        } else {
+            env.storage().persistent().remove(&key);
+        }
+    }
+}
+
+pub fn get_providers_by_status(env: &Env, status: &VerificationStatus) -> Vec<Address> {
+    let key = status_index_key(status);
     env.storage()
         .persistent()
         .get(&key)
