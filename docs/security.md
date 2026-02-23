@@ -1,166 +1,136 @@
-# Security Model
+# Security Scanning and Vulnerability Management
 
-## 1. Overview
+This document describes how automated security scanning is implemented for the Teye-Contracts repository and how to interpret and respond to findings.
 
-This document defines the complete security posture of the system, including:
+## Overview
 
-- Access control model
-- Key management strategy
-- Incident response procedures
-- Audit recommendations
-- Operational best practices
+Security checks are enforced in CI via the `Security Scanning` workflow:
 
----
+- **Dependency vulnerability scanning** with `cargo-audit`
+- **Security-focused linting** with `clippy`
+- **Secret scanning** with `gitleaks`
+- **Security summary reporting** in the GitHub Actions run
 
-# 2. Security Controls
+The workflow is defined in `.github/workflows/security.yml` and runs on:
 
-## 2.1 Access Control
+- Pushes and pull requests targeting the main branches
+- A scheduled daily run (cron)
+- Manual triggers via `workflow_dispatch`
 
-- Owner-only privileged operations
-- Explicit authorization checks
-- No implicit privilege escalation
-- Clear error returns on unauthorized access
+## Dependency Scanning (cargo-audit)
 
-## 2.2 Input Validation
+The `audit` job runs [`cargo-audit`](https://github.com/RustSec/rustsec/tree/main/cargo-audit) against the workspace:
 
-- Strict input bounds checking
-- Rejection of oversized inputs
-- Defensive programming patterns
+- Checks `Cargo.lock` for known vulnerabilities from the RustSec advisory database
+- Fails the job if any vulnerability with a published advisory is detected
+- Uploads `Cargo.lock` as a build artifact for traceability
 
-## 2.3 Upgrade Safety
+**Developer expectations:**
 
-- Versioned state definitions
-- Explicit migration logic
-- Upgrade authorization enforcement
-- Upgrade simulation tool
+- Keep `Cargo.lock` committed and up to date
+- When `cargo-audit` fails:
+  - Prefer upgrading to a non-vulnerable version of the affected crate
+  - If upgrading is not immediately possible, open a tracking issue documenting:
+    - The advisory ID (e.g., `RUSTSEC-YYYY-XXXX`)
+    - The impacted crate and version
+    - The mitigation or compensating controls
 
-## 2.4 Concurrency Protection
+## Security-Focused Clippy Lints
 
-- Mutex-based locking
-- Deterministic execution model
-- No unsafe shared mutable state
+The `clippy-security` job runs `cargo clippy` with a stricter set of lints aimed at catching risky patterns:
 
----
+- `-D warnings` promotes all warnings to errors
+- Additional lints:
+  - `clippy::unwrap_used`
+  - `clippy::expect_used`
+  - `clippy::panic`
+  - `clippy::arithmetic_side_effects`
 
-# 3. Key Management
+**Developer expectations:**
 
-## 3.1 Owner Key
+- Avoid using `unwrap`/`expect` in contract code; prefer explicit error handling
+- Avoid `panic!` in on-chain code paths
+- Address arithmetic lints by:
+  - Using checked or saturating arithmetic where appropriate
+  - Documenting invariants that guarantee safety when using plain operators
 
-- Must be stored in hardware wallet or secure vault.
-- Never hardcoded.
-- Never committed to repository.
+## Secret Scanning (Gitleaks)
 
-## 3.2 Deployment Keys
+The `secret-scanning` job runs [`gitleaks`](https://github.com/gitleaks/gitleaks) against the full Git history:
 
-- Separate dev, staging, production keys.
-- Rotate periodically.
-- Restrict CI secrets access.
+- Clones the repository with full history (`fetch-depth: 0`)
+- Runs `gitleaks detect --source . --verbose --redact`
+- Fails the job on any detected secret
 
-## 3.3 Multi-Signature Recommendation
+**Developer expectations:**
 
-For production deployments:
+- Never commit private keys, seed phrases, API tokens, or other secrets
+- If a secret is accidentally committed:
+  1. **Revoke** the secret immediately (rotate keys, regenerate tokens)
+  2. **Replace** the secret wherever it is used
+  3. Open a security incident ticket and document the impact and mitigation
 
-- Use multisig contract for upgrades.
-- Require N-of-M signatures.
-- Log all upgrade approvals.
+## Security Summary and Reporting
 
----
+The `security-summary` job aggregates the results of all security jobs and writes a human-readable summary to the GitHub Actions run:
 
-# 4. Incident Response Procedures
+- Lists the status of:
+  - Dependency Audit
+  - Clippy Security
+  - Secret Scanning
+- Fails the summary job (and thus the workflow) if any of the dependent jobs failed
 
-## 4.1 Vulnerability Disclosure
+You can view the summary in the **GitHub Actions run page** under the `Security Summary` step output.
 
-1. Freeze contract if possible.
-2. Disable upgrade mechanism if compromised.
-3. Notify stakeholders.
-4. Prepare patched version.
-5. Conduct root cause analysis.
+## GitHub Security Features and Dependency Review
 
-## 4.2 Emergency Upgrade Procedure
+This repository is designed to integrate with GitHub's additional security features:
 
-1. Validate patch locally.
-2. Run migration tests.
-3. Run full test suite.
-4. Execute upgrade via authorized owner.
-5. Verify state post-upgrade.
+- **Dependency graph and vulnerability alerts**
+- **Dependency review** on pull requests
 
-## 4.3 Post-Incident Review
+The `security.yml` workflow includes a commented-out `dependency-review` job that can be enabled once the Dependency Graph is turned on in the repository settings:
 
-- Document root cause.
-- Identify detection gaps.
-- Update threat model.
-- Improve tests.
+1. Navigate to **Settings → Code security and analysis**
+2. Enable **Dependency graph** and **Dependabot alerts**
+3. Uncomment the `dependency-review` job in `.github/workflows/security.yml`
 
----
+When enabled, dependency review will:
 
-# 5. Audit Recommendations
+- Highlight risky dependency changes in pull requests
+- Optionally fail builds when new dependencies introduce advisories above a chosen severity level
 
-## 5.1 Internal Audit Checklist
+## Local Security Checks
 
-- [ ] All privileged functions protected
-- [ ] No unbounded loops
-- [ ] No unchecked arithmetic
-- [ ] Migration logic tested
-- [ ] Upgrade authorization verified
-- [ ] Negative tests implemented
+Developers can run security checks locally before pushing changes:
 
-## 5.2 External Audit
+```bash
+# Run clippy with security-focused lints
+cargo clippy --all-targets --all-features \
+  -- -D warnings \
+  -W clippy::unwrap_used \
+  -W clippy::expect_used \
+  -W clippy::panic \
+  -W clippy::arithmetic_side_effects
 
-Recommended before mainnet / production launch.
+# Run cargo-audit (requires cargo-audit installed)
+cargo install cargo-audit --features=fix
+cargo audit
 
-Audit scope should include:
+# Run gitleaks against the current working tree
+gitleaks detect --source . --verbose --redact
+```
 
-- Access control logic
-- State migration safety
-- Upgrade mechanism
-- Input validation
-- Economic attack vectors
+## Incident Response and Responsible Disclosure
 
----
+If you discover a potential vulnerability:
 
-# 6. Secure Development Guidelines
+1. Do **not** create a public GitHub issue with sensitive details.
+2. Follow the project’s security or disclosure policy (if present in `SECURITY.md` or the repository description).
+3. Provide:
+   - A minimal reproduction or clear description
+   - Potential impact
+   - Any suggested mitigations
 
-- Follow principle of least privilege.
-- Prefer explicit error returns.
-- Avoid panic in production code.
-- Enforce test coverage thresholds.
-- Run CI on every pull request.
+This process helps ensure that vulnerabilities are addressed quickly and responsibly.
 
----
-
-# 7. Security FAQ
-
-### Q: Who can upgrade the contract?
-
-Only the designated owner (or multisig, if configured).
-
-### Q: How is state migration validated?
-
-Through automated migration tests and simulation scripts.
-
-### Q: What prevents race conditions?
-
-Mutex-based locking and deterministic execution.
-
-### Q: How are keys protected?
-
-Keys must be stored securely and never committed.
-
-### Q: What happens if a vulnerability is discovered?
-
-An emergency upgrade procedure is triggered and documented.
-
----
-
-# 8. Security Posture Summary
-
-This system uses:
-
-- Versioned state design
-- Strict access control
-- Defensive input validation
-- Upgrade authorization
-- Comprehensive negative testing
-- CI enforcement
-
-Security is continuously reviewed and updated as part of development.
