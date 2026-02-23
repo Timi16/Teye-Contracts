@@ -1,4 +1,5 @@
 #![no_std]
+mod events;
 pub mod rbac;
 
 use soroban_sdk::{
@@ -118,6 +119,9 @@ impl VisionRecordsContract {
         env.storage().instance().set(&ADMIN, &admin);
         env.storage().instance().set(&INITIALIZED, &true);
 
+        // Assign the Admin RBAC role so the admin has permissions
+        rbac::assign_role(&env, admin.clone(), Role::Admin, 0);
+
         events::publish_initialized(&env, admin);
 
         Ok(())
@@ -160,6 +164,9 @@ impl VisionRecordsContract {
 
         let key = (symbol_short!("USER"), user.clone());
         env.storage().persistent().set(&key, &user_data);
+
+        // Create the RBAC role assignment so has_permission works
+        rbac::assign_role(&env, user.clone(), role.clone(), 0);
 
         events::publish_user_registered(&env, user, role, name);
 
@@ -230,13 +237,26 @@ impl VisionRecordsContract {
         Ok(record_id)
     }
 
-    /// Add multiple vision records in a single transaction
+    /// Add multiple vision records in a single transaction.
+    /// Validates provider permission once, then creates all records atomically.
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn add_records(
         env: Env,
         provider: Address,
         records: Vec<BatchRecordInput>,
     ) -> Result<Vec<u64>, ContractError> {
         provider.require_auth();
+
+        if records.is_empty() {
+            return Err(ContractError::InvalidInput);
+        }
+
+        // Check provider has WriteRecord permission once for the whole batch
+        if !rbac::has_permission(&env, &provider, &Permission::WriteRecord)
+            && !rbac::has_permission(&env, &provider, &Permission::SystemAdmin)
+        {
+            return Err(ContractError::Unauthorized);
+        }
 
         let counter_key = symbol_short!("REC_CTR");
         let mut current_id: u64 = env.storage().instance().get(&counter_key).unwrap_or(0);
@@ -249,8 +269,8 @@ impl VisionRecordsContract {
                 id: current_id,
                 patient: input.patient.clone(),
                 provider: provider.clone(),
-                record_type: input.record_type,
-                data_hash: input.data_hash,
+                record_type: input.record_type.clone(),
+                data_hash: input.data_hash.clone(),
                 created_at: env.ledger().timestamp(),
                 updated_at: env.ledger().timestamp(),
             };
@@ -269,10 +289,21 @@ impl VisionRecordsContract {
                 .persistent()
                 .set(&patient_key, &patient_records);
 
+            events::publish_record_added(
+                &env,
+                current_id,
+                input.patient.clone(),
+                provider.clone(),
+                input.record_type.clone(),
+            );
+
             record_ids.push_back(current_id);
         }
 
         env.storage().instance().set(&counter_key, &current_id);
+
+        events::publish_batch_records_added(&env, provider, record_ids.len());
+
         Ok(record_ids)
     }
 
@@ -286,10 +317,7 @@ impl VisionRecordsContract {
     }
 
     /// Get multiple vision records by ID
-    pub fn get_records(
-        env: Env,
-        record_ids: Vec<u64>,
-    ) -> Result<Vec<VisionRecord>, ContractError> {
+    pub fn get_records(env: Env, record_ids: Vec<u64>) -> Result<Vec<VisionRecord>, ContractError> {
         let mut records = Vec::new(&env);
         for id in record_ids.iter() {
             let key = (symbol_short!("RECORD"), id);
@@ -352,7 +380,9 @@ impl VisionRecordsContract {
         Ok(())
     }
 
-    /// Grant access to multiple users
+    /// Grant access to multiple users in a single transaction.
+    /// Patient authorizes once for the entire batch.
+    #[allow(clippy::arithmetic_side_effects)]
     pub fn grant_access_batch(
         env: Env,
         patient: Address,
@@ -360,18 +390,39 @@ impl VisionRecordsContract {
     ) -> Result<(), ContractError> {
         patient.require_auth();
 
+        if grants.is_empty() {
+            return Err(ContractError::InvalidInput);
+        }
+
         let now = env.ledger().timestamp();
         for grant in grants.iter() {
+            let expires_at = now + grant.duration_seconds;
             let access_grant = AccessGrant {
                 patient: patient.clone(),
                 grantee: grant.grantee.clone(),
-                level: grant.level,
+                level: grant.level.clone(),
                 granted_at: now,
-                expires_at: now + grant.duration_seconds,
+                expires_at,
             };
-            let key = (symbol_short!("ACCESS"), patient.clone(), grant.grantee);
+            let key = (
+                symbol_short!("ACCESS"),
+                patient.clone(),
+                grant.grantee.clone(),
+            );
             env.storage().persistent().set(&key, &access_grant);
+
+            events::publish_access_granted(
+                &env,
+                patient.clone(),
+                grant.grantee.clone(),
+                grant.level.clone(),
+                grant.duration_seconds,
+                expires_at,
+            );
         }
+
+        events::publish_batch_access_granted(&env, patient, grants.len());
+
         Ok(())
     }
 
@@ -465,265 +516,10 @@ impl VisionRecordsContract {
 }
 
 #[cfg(test)]
-mod test {
-    extern crate std;
-    use super::*;
-    use soroban_sdk::testutils::{Address as _, Events};
-    use soroban_sdk::{Env, IntoVal, TryIntoVal};
-
-    #[test]
-    fn test_initialize() {
-        let env = Env::default();
-        // env.mock_all_auths();
-
-        // Attestation must not be empty
-        if attestation.is_empty() {
-            return Err(ContractError::InvalidInput);
-        }
-
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-        let events = env.events().all();
-
-        assert!(client.is_initialized());
-        assert_eq!(client.get_admin(), admin);
-        let our_events: soroban_sdk::Vec<(
-            soroban_sdk::Address,
-            soroban_sdk::Vec<soroban_sdk::Val>,
-            soroban_sdk::Val,
-        )> = events;
-
-        assert!(!our_events.is_empty());
-        let event = our_events.get(our_events.len() - 1).unwrap();
-        assert_eq!(event.1, (symbol_short!("INIT"),).into_val(&env));
-        let payload: events::InitializedEvent = event.2.try_into_val(&env).unwrap();
-        assert_eq!(payload.admin, admin);
-    }
-
-    #[test]
-    fn test_register_user() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(VisionRecordsContract, ());
-        let client = VisionRecordsContractClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let user = Address::generate(&env);
-        let name = String::from_str(&env, "Dr. Smith");
-
-        client.register_user(&user, &Role::Optometrist, &name);
-
-        let user_data = client.get_user(&user);
-        assert_eq!(user_data.role, Role::Optometrist);
-        assert!(user_data.is_active);
-
-        assert!(!events.is_empty());
-        let event = events.get(events.len() - 1).unwrap();
-        assert_eq!(
-            event.1,
-            (symbol_short!("USR_REG"), user.clone()).into_val(&env)
-        );
-        let payload: events::UserRegisteredEvent = event.2.try_into_val(&env).unwrap();
-        assert_eq!(payload.user, user);
-        assert_eq!(payload.role, Role::Optometrist);
-        assert_eq!(payload.name, name);
-    }
-
-    /// Check whether an emergency grant is currently valid.
-    pub fn is_emergency_access_valid(env: Env, access_id: u64) -> bool {
-        let key = (symbol_short!("EMRG"), access_id);
-        if let Some(grant) = env.storage().persistent().get::<_, EmergencyAccess>(&key) {
-            return grant.status == EmergencyStatus::Active
-                && grant.expires_at > env.ledger().timestamp();
-        }
-        false
-    }
-
-    /// Revoke an active emergency grant. Only the original patient or admin may do this.
-    pub fn revoke_emergency_access(
-        env: Env,
-        caller: Address,
-        access_id: u64,
-    ) -> Result<(), ContractError> {
-        caller.require_auth();
-
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&ADMIN)
-            .ok_or(ContractError::NotInitialized)?;
-
-        let key = (symbol_short!("EMRG"), access_id);
-        let mut grant: EmergencyAccess = env
-            .storage()
-            .persistent()
-            .get(&key)
-            .ok_or(ContractError::RecordNotFound)?;
-
-        if caller != grant.patient && caller != admin {
-            return Err(ContractError::Unauthorized);
-        }
-
-        grant.status = EmergencyStatus::Revoked;
-        env.storage().persistent().set(&key, &grant);
-
-        Self::write_emergency_audit(
-            &env,
-            access_id,
-            caller,
-            String::from_str(&env, "REVOKED"),
-            env.ledger().timestamp(),
-        );
-
-        let patient = Address::generate(&env);
-        let provider = Address::generate(&env);
-        let data_hash = String::from_str(&env, "QmHash123");
-
-        let record_id =
-            client.add_record(&patient, &provider, &RecordType::Examination, &data_hash);
-
-        assert_eq!(record_id, 1);
-
-        let record = client.get_record(&record_id);
-        assert_eq!(record.patient, patient);
-        assert_eq!(record.provider, provider);
-
-        assert!(!events.is_empty());
-        let event = events.get(events.len() - 1).unwrap();
-        assert_eq!(
-            event.1,
-            (symbol_short!("REC_ADD"), patient.clone(), provider.clone()).into_val(&env)
-        );
-        let payload: events::RecordAddedEvent = event.2.try_into_val(&env).unwrap();
-        assert_eq!(payload.record_id, record_id);
-        assert_eq!(payload.patient, patient);
-        assert_eq!(payload.provider, provider);
-        assert_eq!(payload.record_type, RecordType::Examination);
-    }
-
-    /// Record that a requester actually accessed a record under emergency authority.
-    /// Call this every time a record is read under an emergency grant.
-    pub fn log_emergency_record_access(
-        env: Env,
-        requester: Address,
-        access_id: u64,
-    ) -> Result<(), ContractError> {
-        requester.require_auth();
-
-        if !Self::is_emergency_access_valid(env.clone(), access_id) {
-            return Err(ContractError::AccessDenied);
-        }
-
-        Self::write_emergency_audit(
-            &env,
-            access_id,
-            requester,
-            String::from_str(&env, "ACCESSED"),
-            env.ledger().timestamp(),
-        );
-
-        Ok(())
-    }
-
-    fn write_emergency_audit(
-        env: &Env,
-        access_id: u64,
-        actor: Address,
-        action: String,
-        timestamp: u64,
-    ) {
-        let audit_key = (symbol_short!("EMRG_LOG"), access_id);
-        let mut log: Vec<EmergencyAuditEntry> = env
-            .storage()
-            .persistent()
-            .get(&audit_key)
-            .unwrap_or(Vec::new(env));
-
-        // Grant access
-        client.grant_access(&patient, &doctor, &AccessLevel::Read, &86400);
-
-        assert_eq!(client.check_access(&patient, &doctor), AccessLevel::Read);
-
-        // Revoke access
-        client.revoke_access(&patient, &doctor);
-        let all_events = env.events().all();
-
-        assert_eq!(client.check_access(&patient, &doctor), AccessLevel::None);
-        let revoke_event = all_events.get(all_events.len() - 1).unwrap();
-        assert_eq!(
-            revoke_event.1,
-            (symbol_short!("ACC_REV"), patient.clone(), doctor.clone()).into_val(&env)
-        );
-        let revoke_payload: events::AccessRevokedEvent = revoke_event.2.try_into_val(&env).unwrap();
-        assert_eq!(revoke_payload.patient, patient);
-        assert_eq!(revoke_payload.grantee, doctor);
-    }
-
-    #[test]
-    fn test_batch_operations() {
-        let env = Env::default();
-        env.mock_all_auths();
-
-        let contract_id = env.register(VisionRecordsContract, ());
-        let client = VisionRecordsContractClient::new(&env, &contract_id);
-
-        let admin = Address::generate(&env);
-        client.initialize(&admin);
-
-        let patient = Address::generate(&env);
-        let provider = Address::generate(&env);
-        let grantee1 = Address::generate(&env);
-        let grantee2 = Address::generate(&env);
-
-        // 1. Test Batch Add Records
-        let mut records_input = Vec::new(&env);
-        records_input.push_back(BatchRecordInput {
-            patient: patient.clone(),
-            record_type: RecordType::Examination,
-            data_hash: String::from_str(&env, "Hash1"),
-        });
-        records_input.push_back(BatchRecordInput {
-            patient: patient.clone(),
-            record_type: RecordType::Prescription,
-            data_hash: String::from_str(&env, "Hash2"),
-        });
-
-        let record_ids = client.add_records(&provider, &records_input);
-        assert_eq!(record_ids.len(), 2);
-
-        // 2. Test Batch Get Records
-        let retrieved_records = client.get_records(&record_ids);
-        assert_eq!(retrieved_records.len(), 2);
-        assert_eq!(
-            retrieved_records.get(0).unwrap().data_hash,
-            String::from_str(&env, "Hash1")
-        );
-        assert_eq!(
-            retrieved_records.get(1).unwrap().data_hash,
-            String::from_str(&env, "Hash2")
-        );
-
-        // 3. Test Batch Grant Access
-        let mut grants_input = Vec::new(&env);
-        grants_input.push_back(BatchGrantInput {
-            grantee: grantee1.clone(),
-            level: AccessLevel::Read,
-            duration_seconds: 3600,
-        });
-        grants_input.push_back(BatchGrantInput {
-            grantee: grantee2.clone(),
-            level: AccessLevel::Write,
-            duration_seconds: 7200,
-        });
-
-        client.grant_access_batch(&patient, &grants_input);
-        assert_eq!(client.check_access(&patient, &grantee1), AccessLevel::Read);
-        assert_eq!(client.check_access(&patient, &grantee2), AccessLevel::Write);
-    }
-}
+mod test;
 
 #[cfg(test)]
 mod test_rbac;
+
+#[cfg(test)]
+mod test_batch;

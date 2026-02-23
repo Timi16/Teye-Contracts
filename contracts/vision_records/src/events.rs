@@ -51,6 +51,24 @@ pub struct AccessRevokedEvent {
     pub timestamp: u64,
 }
 
+/// Event published when a batch of records is added.
+#[soroban_sdk::contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchRecordsAddedEvent {
+    pub provider: Address,
+    pub count: u32,
+    pub timestamp: u64,
+}
+
+/// Event published when a batch of access grants is made.
+#[soroban_sdk::contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct BatchAccessGrantedEvent {
+    pub patient: Address,
+    pub count: u32,
+    pub timestamp: u64,
+}
+
 pub fn publish_initialized(env: &Env, admin: Address) {
     let topics = (symbol_short!("INIT"),);
     let data = InitializedEvent {
@@ -114,6 +132,26 @@ pub fn publish_access_revoked(env: &Env, patient: Address, grantee: Address) {
     let data = AccessRevokedEvent {
         patient,
         grantee,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish(topics, data);
+}
+
+pub fn publish_batch_records_added(env: &Env, provider: Address, count: u32) {
+    let topics = (symbol_short!("BATCH_R"), provider.clone());
+    let data = BatchRecordsAddedEvent {
+        provider,
+        count,
+        timestamp: env.ledger().timestamp(),
+    };
+    env.events().publish(topics, data);
+}
+
+pub fn publish_batch_access_granted(env: &Env, patient: Address, count: u32) {
+    let topics = (symbol_short!("BATCH_A"), patient.clone());
+    let data = BatchAccessGrantedEvent {
+        patient,
+        count,
         timestamp: env.ledger().timestamp(),
     };
     env.events().publish(topics, data);
