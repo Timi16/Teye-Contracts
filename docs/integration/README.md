@@ -17,9 +17,9 @@ To interact with Teye-Contracts, you need to connect to the Stellar RPC network 
 Teye-Contracts strictly adhere to Stellar's native authentication (`soroban_auth`). Third-party apps should NEVER ask for a user's secret key. 
 
 1. **Frontend (Web3):** Use a wallet provider like [Freighter](https://freighter.app/) to request the user's signature for a transaction payload.
-   👉 *See `examples/js/freighter_auth.js` for a complete implementation.*
+   👉 *See `example/js/freighter_auth.js` for a complete implementation.*
 2. **Backend (Server-to-Server):** Use a dedicated server Keypair to sign transactions locally before submitting them to the Soroban RPC.
-   👉 *See `examples/js/invoke.js` for automated signing flows.*
+   👉 *See `example/js/invoke.js` for automated signing flows.*
 
 ---
 
@@ -27,9 +27,9 @@ Teye-Contracts strictly adhere to Stellar's native authentication (`soroban_auth
 
 Here is how you can invoke the Teye-Contracts across different tech stacks. You can find the full, runnable scripts in our `/examples` directory.
 
-* **JavaScript:** `examples/js/invoke.js` (Backend/Node.js) and `examples/js/freighter_auth.js` (Frontend/React/Vanilla).
-* **Python:** `examples/python/webhook_listener.py` (Backend polling and automation).
-* **Rust:** `examples/rust/src/main.rs` (Native cross-contract integrations).
+* **JavaScript:** `example/js/invoke.js` (Backend/Node.js) and `example/js/freighter_auth.js` (Frontend/React/Vanilla).
+* **Python:** `example/python/webhook_listener.py` (Backend polling and automation).
+* **Rust:** `example/rust/src/main.rs` (Native cross-contract integrations).
 
 ---
 
@@ -43,4 +43,4 @@ Teye-Contracts emit standard Soroban events when state changes occur. To build a
 3. Process the returned data and update your local database.
 4. Update your `startLedger` for the next cron cycle.
 
-👉 *See `examples/python/webhook_listener.py` for a complete polling implementation.*
+👉 *See `example/python/webhook_listener.py` for a complete polling implementation.*

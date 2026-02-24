@@ -3,15 +3,25 @@
  * ----------------------------------------------
  * Demonstrates how to authenticate, simulate, and submit 
  * a transaction to a Teye-Contract.
- * * Install: npm install @stellar/stellar-sdk
+ * * Install: npm install @stellar/stellar-sdk dotenv
  */
 
 import { Keypair, SorobanRpc, TransactionBuilder, Networks, Contract, nativeToScVal, scValToNative } from "@stellar/stellar-sdk";
+import dotenv from "dotenv";
 
-const RPC_URL = "https://soroban-testnet.stellar.org";
-const NETWORK_PASSPHRASE = Networks.TESTNET;
-const CONTRACT_ID = "C...[Insert Teye-Contract ID]";
-const SECRET_KEY = "S...[Your Server Secret Key]"; 
+dotenv.config(); // Load environment variables
+
+const RPC_URL = process.env.RPC_URL || "https://soroban-testnet.stellar.org";
+const NETWORK_PASSPHRASE = process.env.NETWORK_PASSPHRASE || Networks.TESTNET;
+const CONTRACT_ID = process.env.TEYE_CONTRACT_ID;
+
+// DO NOT commit your secret key to source control! 
+// Provide it via environment variables instead.
+const SECRET_KEY = process.env.SERVER_SECRET_KEY; 
+
+if (!CONTRACT_ID || !SECRET_KEY) {
+    throw new Error("Missing required environment variables (TEYE_CONTRACT_ID or SERVER_SECRET_KEY). Please check your .env file.");
+}
 
 async function invokeTeyeContract() {
     console.log("Initializing connection...");
@@ -38,19 +48,33 @@ async function invokeTeyeContract() {
     if (SorobanRpc.Api.isSimulationError(simulation)) throw new Error(`Simulation failed: ${simulation.error}`);
 
     // 4. Assemble and Sign
-    const assembledTx = SorobanRpc.assembleTransaction(tx, simulation);
+    // FIX: Call .build() to convert the TransactionBuilder into a Transaction before signing
+    const assembledTx = SorobanRpc.assembleTransaction(tx, simulation).build();
     assembledTx.sign(sourceKeypair);
 
     // 5. Submit
     console.log("Submitting to network...");
     const response = await rpc.sendTransaction(assembledTx);
-    if (response.status === "ERROR") throw new Error(`Submission failed: ${response.errorResultXdr}`);
+    
+    // FIX: Better error handling with XDR explanation
+    if (response.status === "ERROR") {
+        console.error(`❌ Submission failed. Raw Error XDR: ${response.errorResultXdr}`);
+        console.error(`Decode this XDR at: https://laboratory.stellar.org/#xdr-viewer`);
+        throw new Error("Transaction rejected by the network.");
+    }
 
     // 6. Poll for success
     console.log(`Transaction sent! Hash: ${response.hash}. Polling...`);
     let txStatus = await rpc.getTransaction(response.hash);
     
+    // FIX: Bounded retry guard to prevent infinite looping
+    const startTime = Date.now();
+    const TIMEOUT_MS = 30000; // 30 seconds limit
+
     while (txStatus.status === "NOT_FOUND") {
+        if (Date.now() - startTime > TIMEOUT_MS) {
+            throw new Error("Transaction polling timed out after 30 seconds.");
+        }
         await new Promise(resolve => setTimeout(resolve, 2000));
         txStatus = await rpc.getTransaction(response.hash);
     }

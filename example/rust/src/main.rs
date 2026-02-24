@@ -1,9 +1,15 @@
 #![no_std]
-use soroban_sdk::{contractimpl, Env, String, Address};
+use soroban_sdk::{contract, contractimpl, Env, String, Address};
 
 /*
  * Teye-Contracts: Rust Integration Example
  * Add to Cargo.toml: soroban-sdk = "20.0.0" 
+ *
+ * PREREQUISITE:
+ * This example requires the Teye smart contract to be built first, as the macro 
+ * resolves the WASM file at compile time. 
+ * Run `stellar contract build` or `cargo build --manifest-path=...` for the 
+ * teye contract before compiling this example.
  */
 
 // Generate Client bindings from compiled WASM
@@ -11,6 +17,7 @@ soroban_sdk::contractimport!(
     file = "../../target/wasm32-unknown-unknown/release/teye_contract.wasm"
 );
 
+#[contract]
 pub struct ThirdPartyApp;
 
 #[contractimpl]
