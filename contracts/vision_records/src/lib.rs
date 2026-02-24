@@ -98,6 +98,15 @@ pub enum RecordType {
     LabResult,
 }
 
+/// Status for emergency access grants
+#[contracttype]
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum EmergencyStatus {
+    Active,
+    Revoked,
+    Expired,
+}
+
 /// User information structure
 #[contracttype]
 #[derive(Clone, Debug)]
@@ -167,9 +176,11 @@ pub enum ContractError {
 }
 
 #[contract]
+#[allow(clippy::too_many_arguments)]
 pub struct VisionRecordsContract;
 
 #[contractimpl]
+#[allow(clippy::too_many_arguments)]
 impl VisionRecordsContract {
     fn enforce_rate_limit(env: &Env, caller: &Address) -> Result<(), ContractError> {
         let cfg: Option<(u64, u64)> = env.storage().instance().get(&RATE_CFG);
@@ -998,6 +1009,73 @@ impl VisionRecordsContract {
     pub fn get_record_count(env: Env) -> u64 {
         let counter_key = symbol_short!("REC_CTR");
         env.storage().instance().get(&counter_key).unwrap_or(0)
+    }
+
+    /// Add a new prescription
+    #[allow(clippy::too_many_arguments)]
+    pub fn add_prescription(
+        env: Env,
+        patient: Address,
+        provider: Address,
+        lens_type: LensType,
+        left_eye: PrescriptionData,
+        right_eye: PrescriptionData,
+        contact_data: OptionalContactLensData,
+        duration_seconds: u64,
+        metadata_hash: String,
+    ) -> Result<u64, ContractError> {
+        provider.require_auth();
+
+        // Check if provider is authorized (role check)
+        let provider_data = VisionRecordsContract::get_user(env.clone(), provider.clone())?;
+        if provider_data.role != Role::Optometrist && provider_data.role != Role::Ophthalmologist {
+            return Err(ContractError::Unauthorized);
+        }
+
+        // Generate ID
+        let counter_key = symbol_short!("RX_CTR");
+        let rx_id: u64 = env.storage().instance().get(&counter_key).unwrap_or(0) + 1;
+        env.storage().instance().set(&counter_key, &rx_id);
+
+        let rx = Prescription {
+            id: rx_id,
+            patient,
+            provider,
+            lens_type,
+            left_eye,
+            right_eye,
+            contact_data,
+            issued_at: env.ledger().timestamp(),
+            expires_at: env.ledger().timestamp() + duration_seconds,
+            verified: false,
+            metadata_hash,
+        };
+
+        prescription::save_prescription(&env, &rx);
+
+        Ok(rx_id)
+    }
+
+    /// Get a prescription by ID
+    pub fn get_prescription(env: Env, rx_id: u64) -> Result<Prescription, ContractError> {
+        prescription::get_prescription(&env, rx_id).ok_or(ContractError::RecordNotFound)
+    }
+
+    /// Get all prescription IDs for a patient
+    pub fn get_prescription_history(env: Env, patient: Address) -> Vec<u64> {
+        prescription::get_patient_history(&env, patient)
+    }
+
+    /// Verify a prescription (e.g., by a pharmacy or another provider)
+    pub fn verify_prescription(
+        env: Env,
+        rx_id: u64,
+        verifier: Address,
+    ) -> Result<bool, ContractError> {
+        // Ensure verifier exists
+        VisionRecordsContract::get_user(env.clone(), verifier.clone())?;
+
+        Ok(prescription::verify_prescription(&env, rx_id, verifier))
     }
 
     /// Contract version
