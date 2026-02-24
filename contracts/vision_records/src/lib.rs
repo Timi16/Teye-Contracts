@@ -283,6 +283,7 @@ impl VisionRecordsContract {
         )?;
         caller.require_auth();
 
+        // Unified check: covers direct role, custom grants, and delegated roles
         if !rbac::has_permission(&env, &caller, &Permission::ManageUsers) {
             let resource_id = String::from_str(&env, "register_user");
             let context = create_error_context(
@@ -375,12 +376,15 @@ impl VisionRecordsContract {
 
         validation::validate_data_hash(&data_hash)?;
 
+        // If caller is the provider, unified check covers direct + delegated WriteRecord.
+        // Otherwise, check if this specific provider delegated to the caller.
         let has_perm = if caller == provider {
             rbac::has_permission(&env, &caller, &Permission::WriteRecord)
         } else {
             rbac::has_delegated_permission(&env, &provider, &caller, &Permission::WriteRecord)
         };
 
+        // Fall back to SystemAdmin (unified: direct role + any delegation)
         if !has_perm && !rbac::has_permission(&env, &caller, &Permission::SystemAdmin) {
             return Err(ContractError::Unauthorized);
         }
@@ -627,7 +631,9 @@ impl VisionRecordsContract {
         let has_perm = if caller == patient {
             true // Patient manages own access
         } else {
+            // Specific patient→caller delegation for ManageAccess
             rbac::has_delegated_permission(&env, &patient, &caller, &Permission::ManageAccess)
+                // Or caller has SystemAdmin (unified: direct + any delegation)
                 || rbac::has_permission(&env, &caller, &Permission::SystemAdmin)
         };
 
@@ -1020,6 +1026,7 @@ impl VisionRecordsContract {
         permission: Permission,
     ) -> Result<(), ContractError> {
         caller.require_auth();
+        // Unified check: covers direct role, custom grants, and delegated roles
         if !rbac::has_permission(&env, &caller, &Permission::ManageUsers) {
             return Err(ContractError::Unauthorized);
         }
@@ -1037,6 +1044,7 @@ impl VisionRecordsContract {
         permission: Permission,
     ) -> Result<(), ContractError> {
         caller.require_auth();
+        // Unified check: covers direct role, custom grants, and delegated roles
         if !rbac::has_permission(&env, &caller, &Permission::ManageUsers) {
             return Err(ContractError::Unauthorized);
         }

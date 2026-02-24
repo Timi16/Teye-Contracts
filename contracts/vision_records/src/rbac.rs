@@ -196,7 +196,10 @@ pub fn revoke_custom_permission(
     Ok(())
 }
 
-/// Create a delegation from `delegator` to `delegatee`
+/// Create a delegation from `delegator` to `delegatee`.
+///
+/// Also updates the delegatee's delegation index so that `has_permission`
+/// can discover all active delegations when evaluating permissions.
 pub fn delegate_role(
     env: &Env,
     delegator: Address,
@@ -214,6 +217,20 @@ pub fn delegate_role(
     let key = delegation_key(&delegator, &delegatee);
     env.storage().persistent().set(&key, &del);
     extend_ttl_delegation_key(env, &key);
+
+    // Maintain the delegatee's index of delegators for unified permission lookups
+    let idx_key = delegatee_index_key(&delegatee);
+    let mut delegators: Vec<Address> = env
+        .storage()
+        .persistent()
+        .get(&idx_key)
+        .unwrap_or(Vec::new(env));
+
+    if !delegators.contains(&delegator) {
+        delegators.push_back(delegator);
+    }
+    env.storage().persistent().set(&idx_key, &delegators);
+    extend_ttl_address_key(env, &idx_key);
 }
 
 /// Retrieve the active delegations for a particular `delegatee` representing `delegator`
@@ -308,19 +325,20 @@ pub fn get_group_permissions(env: &Env, name: &String) -> Vec<Permission> {
 /// This function merges Base Role inherited permissions, Custom Grants, Custom Revokes,
 /// and currently active delegated Roles.
 pub fn has_permission(env: &Env, user: &Address, permission: &Permission) -> bool {
-    // 1. Check primary active assignment
+    // Step 1: Check direct role assignment
     if let Some(assignment) = get_active_assignment(env, user) {
-        // Did we explicitly revoke it?
+        // Explicit revoke takes highest priority — overrides grants,
+        // base role, AND delegations to prevent bypass.
         if assignment.custom_revokes.contains(permission) {
-            return false; // Explicit revoke overrides all basic/grant logic below
+            return false;
         }
 
-        // Did we explicitly grant it?
+        // Explicit custom grant takes precedence over base role lookup
         if assignment.custom_grants.contains(permission) {
             return true;
         }
 
-        // Do we get it implicitly through our baseline role hierarchy?
+        // Check base permissions inherited from the assigned role
         if get_base_permissions(env, &assignment.role).contains(permission) {
             return true;
         }
@@ -342,7 +360,14 @@ pub fn has_permission(env: &Env, user: &Address, permission: &Permission) -> boo
     false
 }
 
-/// Same as has_permission, but also checks if `delegatee` can perform the action on behalf of `delegator`.
+/// Checks if `delegatee` holds `permission` through a specific delegation
+/// from `delegator`.
+///
+/// Unlike `has_permission` which checks ALL delegation paths, this function
+/// verifies a specific delegator→delegatee relationship. Use this when the
+/// caller must be acting on behalf of a particular entity (e.g., a provider
+/// delegating record-writing authority, or a patient delegating access
+/// management).
 pub fn has_delegated_permission(
     env: &Env,
     delegator: &Address,
