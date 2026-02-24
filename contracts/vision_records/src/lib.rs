@@ -19,13 +19,9 @@ use soroban_sdk::{
     contract, contractimpl, contracttype, symbol_short, Address, BytesN, Env, String, Symbol, Vec,
 };
 
-use alloc::{string::String as StdString, vec::Vec as StdVec};
-use teye_common as common;
-use teye_common::{
-    admin_tiers::{self, AdminTier},
-    keys::KeyManager,
-    whitelist,
-};
+extern crate alloc;
+use alloc::string::ToString;
+use teye_common::{multisig, whitelist, KeyManager, StdString, StdVec, admin_tiers, AdminTier};
 
 /// Re-export the contract-specific error type at the crate root.
 pub use errors::ContractError;
@@ -739,6 +735,7 @@ impl VisionRecordsContract {
         record_type: RecordType,
         data_hash: String,
     ) -> Result<u64, ContractError> {
+        let _guard = teye_common::ReentrancyGuard::new(&env);
         circuit_breaker::require_not_paused(
             &env,
             &circuit_breaker::PauseScope::Function(symbol_short!("ADD_REC")),
@@ -813,7 +810,7 @@ impl VisionRecordsContract {
                 .get::<(Symbol, String), String>(&(ENC_KEY, ver.clone()))
             {
                 let hex = sv.to_string();
-                if let Some(bytes) = common::hex_to_bytes(&hex) {
+                if let Some(bytes) = teye_common::hex_to_bytes(&hex) {
                     master_bytes = bytes;
                 }
             }
@@ -899,7 +896,7 @@ impl VisionRecordsContract {
                 .get::<(Symbol, String), String>(&(ENC_KEY, ver.clone()))
             {
                 let hex = sv.to_string();
-                if let Some(bytes) = common::hex_to_bytes(&hex) {
+                if let Some(bytes) = teye_common::hex_to_bytes(&hex) {
                     master_bytes_batch = bytes;
                 }
             }
@@ -1034,7 +1031,7 @@ impl VisionRecordsContract {
                         .get::<(Symbol, String), String>(&(ENC_KEY, ver.clone()))
                     {
                         let hex = sv.to_string();
-                        if let Some(bytes) = common::hex_to_bytes(&hex) {
+                        if let Some(bytes) = teye_common::hex_to_bytes(&hex) {
                             master_bytes = bytes;
                         }
                     }
@@ -1191,6 +1188,7 @@ impl VisionRecordsContract {
         level: AccessLevel,
         duration_seconds: u64,
     ) -> Result<(), ContractError> {
+        let _guard = teye_common::ReentrancyGuard::new(&env);
         circuit_breaker::require_not_paused(
             &env,
             &circuit_breaker::PauseScope::Function(symbol_short!("GRT_ACC")),
