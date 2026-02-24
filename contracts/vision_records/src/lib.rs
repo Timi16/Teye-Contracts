@@ -71,6 +71,12 @@ fn extend_ttl_access_key(env: &Env, key: &(Symbol, Address, Address)) {
         .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
 }
 
+fn extend_ttl_record_access_key(env: &Env, key: &(Symbol, u64, Address)) {
+    env.storage()
+        .persistent()
+        .extend_ttl(key, TTL_THRESHOLD, TTL_EXTEND_TO);
+}
+
 fn consent_key(patient: &Address, grantee: &Address) -> (Symbol, Address, Address) {
     (symbol_short!("CONSENT"), patient.clone(), grantee.clone())
 }
@@ -680,6 +686,8 @@ impl VisionRecordsContract {
                             );
                             access_level != AccessLevel::None
                         }
+                        || Self::check_record_access(env.clone(), record_id, caller.clone())
+                            != AccessLevel::None
                 };
 
                 if !has_access {
@@ -816,9 +824,12 @@ impl VisionRecordsContract {
             true
         } else {
             let access = Self::check_access(env.clone(), record.patient.clone(), caller.clone());
+            let record_access =
+                Self::check_record_access(env.clone(), record_id, caller.clone());
             access == AccessLevel::Read
                 || access == AccessLevel::Write
                 || access == AccessLevel::Full
+                || record_access != AccessLevel::None
                 || rbac::has_permission(&env, &caller, &Permission::SystemAdmin)
         };
 
@@ -982,6 +993,89 @@ impl VisionRecordsContract {
         }
 
         AccessLevel::None
+    }
+
+    /// Grant record-level access to a specific record.
+    #[allow(clippy::arithmetic_side_effects)]
+    pub fn grant_record_access(
+        env: Env,
+        patient: Address,
+        grantee: Address,
+        record_id: u64,
+        level: AccessLevel,
+        duration_seconds: u64,
+    ) -> Result<(), ContractError> {
+        patient.require_auth();
+        validation::validate_duration(duration_seconds)?;
+
+        let record_key = (symbol_short!("RECORD"), record_id);
+        let record: VisionRecord = env
+            .storage()
+            .persistent()
+            .get(&record_key)
+            .ok_or(ContractError::RecordNotFound)?;
+        if record.patient != patient {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let now = env.ledger().timestamp();
+        let expires_at = now + duration_seconds;
+        let grant = AccessGrant {
+            patient: patient.clone(),
+            grantee: grantee.clone(),
+            level: level.clone(),
+            granted_at: now,
+            expires_at,
+        };
+
+        let key = (symbol_short!("REC_ACC"), record_id, grantee.clone());
+        env.storage().persistent().set(&key, &grant);
+        extend_ttl_record_access_key(&env, &key);
+
+        events::publish_record_access_granted(
+            &env,
+            patient,
+            grantee,
+            record_id,
+            level,
+            duration_seconds,
+            expires_at,
+        );
+        Ok(())
+    }
+
+    /// Check record-level access for a specific grantee.
+    pub fn check_record_access(env: Env, record_id: u64, grantee: Address) -> AccessLevel {
+        let key = (symbol_short!("REC_ACC"), record_id, grantee);
+        if let Some(grant) = env.storage().persistent().get::<_, AccessGrant>(&key) {
+            if grant.expires_at > env.ledger().timestamp() {
+                return grant.level;
+            }
+        }
+        AccessLevel::None
+    }
+
+    /// Revoke record-level access for a specific record.
+    pub fn revoke_record_access(
+        env: Env,
+        patient: Address,
+        grantee: Address,
+        record_id: u64,
+    ) -> Result<(), ContractError> {
+        patient.require_auth();
+        let record_key = (symbol_short!("RECORD"), record_id);
+        let record: VisionRecord = env
+            .storage()
+            .persistent()
+            .get(&record_key)
+            .ok_or(ContractError::RecordNotFound)?;
+        if record.patient != patient {
+            return Err(ContractError::Unauthorized);
+        }
+
+        let key = (symbol_short!("REC_ACC"), record_id, grantee);
+        env.storage().persistent().remove(&key);
+        Ok(())
     }
 
     /// Grant consent for a grantee.
