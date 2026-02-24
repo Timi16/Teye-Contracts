@@ -102,6 +102,8 @@ pub enum ContractError {
     ContractPaused = 23,
     InsufficientPermissions = 24,
     TransientFailure = 25,
+    MetaTxExpired = 26,
+    NonceAlreadyUsed = 27,
 }
 
 impl ContractError {
@@ -118,22 +120,29 @@ impl ContractError {
             | ContractError::InvalidPermission
             | ContractError::InvalidDataHash
             | ContractError::InvalidRecordType
-            | ContractError::InvalidVerificationStatus => ErrorCategory::Validation,
+            | ContractError::InvalidVerificationStatus
+            | ContractError::MetaTxExpired => ErrorCategory::Validation,
             ContractError::Unauthorized
             | ContractError::AccessDenied
             | ContractError::InsufficientPermissions
-            | ContractError::ExpiredAccess => ErrorCategory::Authorization,
+            | ContractError::ExpiredAccess
+            | ContractError::ConsentRequired
+            | ContractError::ConsentExpired => ErrorCategory::Authorization,
             ContractError::UserNotFound
             | ContractError::RecordNotFound
-            | ContractError::ProviderNotFound => ErrorCategory::NotFound,
+            | ContractError::ProviderNotFound
+            | ContractError::EmergencyAccessNotFound
+            | ContractError::AppointmentNotFound => ErrorCategory::NotFound,
             ContractError::ProviderAlreadyRegistered
             | ContractError::DuplicateRecord
-            | ContractError::DelegationExpired => ErrorCategory::StateConflict,
+            | ContractError::DelegationExpired
+            | ContractError::NonceAlreadyUsed => ErrorCategory::StateConflict,
             ContractError::StorageError => ErrorCategory::Storage,
             ContractError::TransientFailure | ContractError::RateLimitExceeded => {
                 ErrorCategory::Transient
             }
             ContractError::Paused | ContractError::ContractPaused => ErrorCategory::System,
+            ContractError::AppointmentNotVerified => ErrorCategory::Validation,
         }
     }
 
@@ -151,17 +160,23 @@ impl ContractError {
             | ContractError::InvalidDataHash
             | ContractError::InvalidRecordType
             | ContractError::InvalidVerificationStatus
+            | ContractError::InvalidEmergencyCondition
+            | ContractError::InvalidAttestation
+            | ContractError::InvalidAppointmentTime
+            | ContractError::InvalidAppointmentStatus
             | ContractError::UserNotFound
             | ContractError::RecordNotFound
             | ContractError::ProviderNotFound
-            | ContractError::DuplicateRecord => ErrorSeverity::Low,
+            | ContractError::DuplicateRecord
+            | ContractError::MetaTxExpired => ErrorSeverity::Low,
             ContractError::Unauthorized
             | ContractError::AccessDenied
             | ContractError::InsufficientPermissions
             | ContractError::ExpiredAccess
             | ContractError::ProviderAlreadyRegistered
             | ContractError::DelegationExpired
-            | ContractError::RateLimitExceeded => ErrorSeverity::Medium,
+            | ContractError::RateLimitExceeded
+            | ContractError::NonceAlreadyUsed => ErrorSeverity::Medium,
             ContractError::StorageError | ContractError::TransientFailure => ErrorSeverity::High,
             ContractError::Paused | ContractError::ContractPaused => ErrorSeverity::Critical,
         }
@@ -207,6 +222,8 @@ impl ContractError {
             ContractError::ContractPaused => "Contract is paused",
             ContractError::InsufficientPermissions => "Insufficient permissions for operation",
             ContractError::TransientFailure => "Transient failure, operation may succeed on retry",
+            ContractError::MetaTxExpired => "Meta-transaction has expired",
+            ContractError::NonceAlreadyUsed => "Nonce has already been used",
         }
     }
 }

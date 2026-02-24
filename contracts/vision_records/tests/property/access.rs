@@ -1,3 +1,4 @@
+#![allow(clippy::unwrap_used, clippy::expect_used, clippy::arithmetic_side_effects)]
 //! Property-based tests for the access-control layer.
 //!
 //! Invariants tested:
@@ -77,7 +78,7 @@ proptest! {
         client.grant_access(&patient, &patient, &grantee, &level, &duration);
         prop_assert_ne!(client.check_access(&patient, &grantee), AccessLevel::None);
 
-        client.revoke_access(&patient, &grantee);
+        client.revoke_access(&patient, &patient, &grantee);
         prop_assert_eq!(client.check_access(&patient, &grantee), AccessLevel::None);
     }
 
@@ -89,7 +90,7 @@ proptest! {
         let grantee = Address::generate(&env);
 
         // No grant was ever issued — revoke should be a no-op
-        client.revoke_access(&patient, &grantee);
+        client.revoke_access(&patient, &patient, &grantee);
         prop_assert_eq!(client.check_access(&patient, &grantee), AccessLevel::None);
     }
 
@@ -137,7 +138,7 @@ proptest! {
         prop_assert_eq!(client.check_access(&patient, &grantee_b), level_b.clone());
 
         // Revoking grantee_a must not affect grantee_b
-        client.revoke_access(&patient, &grantee_a);
+        client.revoke_access(&patient, &patient, &grantee_a);
         prop_assert_eq!(client.check_access(&patient, &grantee_a), AccessLevel::None);
         prop_assert_eq!(client.check_access(&patient, &grantee_b), level_b);
     }
