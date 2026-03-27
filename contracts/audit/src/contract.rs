@@ -1,4 +1,7 @@
-use soroban_sdk::{contract, contractimpl, contracttype, Address, Env, Symbol, symbol_short, Vec, Val, Error, IntoVal};
+use soroban_sdk::{
+    contract, contractimpl, contracttype, symbol_short, Address, Env, Error, IntoVal, Symbol, Val,
+    Vec,
+};
 
 #[contract]
 pub struct AuditContract;
@@ -37,7 +40,11 @@ impl AuditContract {
         let admin: Address = env.storage().instance().get(&ADMIN).unwrap();
         admin.require_auth();
 
-        if env.storage().persistent().has(&(SEGMENTS, segment_id.clone())) {
+        if env
+            .storage()
+            .persistent()
+            .has(&(SEGMENTS, segment_id.clone()))
+        {
             return Err(Error::from_contract_error(1)); // Segment already exists
         }
 
@@ -46,7 +53,9 @@ impl AuditContract {
             next_sequence: 1,
         };
 
-        env.storage().persistent().set(&(SEGMENTS, segment_id), &segment_info);
+        env.storage()
+            .persistent()
+            .set(&(SEGMENTS, segment_id), &segment_info);
         Ok(())
     }
 
@@ -58,7 +67,9 @@ impl AuditContract {
         target: Symbol,
         result: Symbol,
     ) -> Result<u64, Error> {
-        let mut segment_info: SegmentInfo = env.storage().persistent()
+        let mut segment_info: SegmentInfo = env
+            .storage()
+            .persistent()
             .get(&(SEGMENTS, segment_id.clone()))
             .ok_or(Error::from_contract_error(2))?; // Segment not found
 
@@ -75,12 +86,16 @@ impl AuditContract {
         segment_info.entries.push_back(entry);
         segment_info.next_sequence += 1;
 
-        env.storage().persistent().set(&(SEGMENTS, segment_id), &segment_info);
+        env.storage()
+            .persistent()
+            .set(&(SEGMENTS, segment_id), &segment_info);
         Ok(sequence)
     }
 
     pub fn get_entries(env: Env, segment_id: Symbol) -> Result<Vec<AuditLogEntry>, Error> {
-        let segment_info: SegmentInfo = env.storage().persistent()
+        let segment_info: SegmentInfo = env
+            .storage()
+            .persistent()
             .get(&(SEGMENTS, segment_id))
             .ok_or(Error::from_contract_error(2))?; // Segment not found
 
@@ -88,7 +103,9 @@ impl AuditContract {
     }
 
     pub fn get_entry_count(env: Env, segment_id: Symbol) -> Result<u64, Error> {
-        let segment_info: SegmentInfo = env.storage().persistent()
+        let segment_info: SegmentInfo = env
+            .storage()
+            .persistent()
             .get(&(SEGMENTS, segment_id))
             .ok_or(Error::from_contract_error(2))?; // Segment not found
 
@@ -146,22 +163,40 @@ impl AuditContract {
         compliance_action: Symbol,
         compliance_method: Symbol,
     ) -> Result<u64, Error> {
-        let identity_ok = Self::verify_identity(env.clone(), identity_contract, actor.clone(), identity_method)?;
+        let identity_ok = Self::verify_identity(
+            env.clone(),
+            identity_contract,
+            actor.clone(),
+            identity_method,
+        )?;
         if !identity_ok {
             return Err(Error::from_contract_error(3));
         }
 
-        let balance = Self::check_vault_balance(env.clone(), vault_contract, actor.clone(), vault_method)?;
+        let balance =
+            Self::check_vault_balance(env.clone(), vault_contract, actor.clone(), vault_method)?;
         if balance < 0 {
             return Err(Error::from_contract_error(4));
         }
 
-        let compliant = Self::check_compliance(env.clone(), compliance_contract, compliance_action, compliance_method)?;
+        let compliant = Self::check_compliance(
+            env.clone(),
+            compliance_contract,
+            compliance_action,
+            compliance_method,
+        )?;
         if !compliant {
             return Err(Error::from_contract_error(5));
         }
 
-        let seq = Self::append_entry(env.clone(), segment_id.clone(), actor, action, target, result)?;
+        let seq = Self::append_entry(
+            env.clone(),
+            segment_id.clone(),
+            actor,
+            action,
+            target,
+            result,
+        )?;
 
         Ok(seq)
     }

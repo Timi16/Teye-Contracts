@@ -11,7 +11,7 @@
 //! 6. Entry sequence numbering starts at 1
 
 use audit::{
-    merkle_log::{MerkleLog, RootCheckpoint},
+    merkle_log::MerkleLog,
     types::{AuditError, LogSegmentId, RetentionPolicy},
 };
 
@@ -21,16 +21,16 @@ use audit::{
 
 /// Setup a basic MerkleLog instance with a valid segment identifier.
 fn setup_basic_log() -> (MerkleLog, LogSegmentId) {
-    let segment = LogSegmentId::new("healthcare.access")
-        .expect("healthcare.access is a valid segment");
+    let segment =
+        LogSegmentId::new("healthcare.access").expect("healthcare.access is a valid segment");
     let log = MerkleLog::new(segment.clone());
     (log, segment)
 }
 
 /// Setup a MerkleLog with a longer segment identifier.
 fn setup_log_with_long_segment() -> Result<(MerkleLog, LogSegmentId), AuditError> {
-    let long_label = "compliance.audit.trace.detailed.logging.system.healthcare.sensitive.data";
-    let segment = LogSegmentId::new(long_label)?;
+    let long_label = "a".repeat(64);
+    let segment = LogSegmentId::new(&long_label)?;
     let log = MerkleLog::new(segment.clone());
     Ok((log, segment))
 }
@@ -45,16 +45,8 @@ fn test_new_log_is_empty() {
     let (log, segment) = setup_basic_log();
 
     assert_eq!(log.len(), 0, "New log should have no entries");
-    assert_eq!(
-        log.witness_count(),
-        0,
-        "New log should have no witnesses"
-    );
-    assert_eq!(
-        log.segment,
-        segment,
-        "Segment should match initialization"
-    );
+    assert_eq!(log.witness_count(), 0, "New log should have no witnesses");
+    assert_eq!(log.segment, segment, "Segment should match initialization");
     assert!(log.is_empty(), "Log should be empty");
 }
 
@@ -105,10 +97,7 @@ fn test_initial_merkle_root_is_zero_hash() {
     let root = log.current_root();
     let zero_hash = [0u8; 32];
 
-    assert_eq!(
-        root, zero_hash,
-        "Root of empty log should be the zero hash"
-    );
+    assert_eq!(root, zero_hash, "Root of empty log should be the zero hash");
 }
 
 /// Test that no checkpoints are created on initialization.
@@ -137,11 +126,7 @@ fn test_publish_root_creates_single_checkpoint() {
         "Publishing root should create one checkpoint"
     );
 
-    assert_eq!(
-        root,
-        [0u8; 32],
-        "Root of empty log should remain zero hash"
-    );
+    assert_eq!(root, [0u8; 32], "Root of empty log should remain zero hash");
 }
 
 /// Test that retention policy can be set without errors.
@@ -235,14 +220,13 @@ fn test_multiple_independent_log_instances() {
 /// Test that a MerkleLog immutably stores its segment after creation.
 #[test]
 fn test_immutability_of_initialized_state() {
-    let (log, segment) = setup_basic_log();
+    let (log, _segment) = setup_basic_log();
 
     let original_segment = log.segment.clone();
 
     // Verify state remains accessible
     assert_eq!(
-        log.segment,
-        original_segment,
+        log.segment, original_segment,
         "Segment should remain unchanged"
     );
     assert_eq!(log.len(), 0, "Log should still be empty");
@@ -267,14 +251,14 @@ fn test_append_maintains_initialization_invariants() {
 /// Test that retention policy does not affect core initialization state.
 #[test]
 fn test_retention_policy_independent_of_core_state() {
-    let (mut log, segment) = setup_basic_log();
+    let (mut log, _segment) = setup_basic_log();
 
     // Before setting retention policy
     let len_before = log.len();
 
     // Set retention policy
     let policy = RetentionPolicy {
-        segment: segment.clone(),
+        segment: _segment.clone(),
         min_retention_secs: 86_400,
         requires_witness_for_deletion: false,
     };
@@ -298,33 +282,15 @@ fn test_constraints_valid_after_multiple_root_publications() {
     let (mut log, segment) = setup_basic_log();
 
     for i in 0..3 {
-        let seq = log.append(
-            1_700_000_000 + i as u64,
-            "actor",
-            "action",
-            "target",
-            "ok",
-        );
+        let seq = log.append(1_700_000_000 + i as u64, "actor", "action", "target", "ok");
         assert_eq!(seq, i + 1, "Sequence should be sequential");
 
         log.publish_root(1_700_000_000 + i as u64);
     }
 
-    assert_eq!(
-        log.checkpoints().len(),
-        3,
-        "Should have 3 checkpoints"
-    );
-    assert_eq!(
-        log.len(),
-        3,
-        "Should have 3 entries"
-    );
-    assert_eq!(
-        log.segment,
-        segment,
-        "Segment should remain unchanged"
-    );
+    assert_eq!(log.checkpoints().len(), 3, "Should have 3 checkpoints");
+    assert_eq!(log.len(), 3, "Should have 3 entries");
+    assert_eq!(log.segment, segment, "Segment should remain unchanged");
 }
 
 /// Test that zero-length segment identifiers are consistently rejected.
@@ -338,10 +304,7 @@ fn test_zero_length_segment_consistently_rejected() {
 
     for result in attempts.iter() {
         assert!(result.is_err(), "Empty segments should always be rejected");
-        assert_eq!(
-            result.as_ref().unwrap_err(),
-            &AuditError::InvalidSegmentId
-        );
+        assert_eq!(result.as_ref().unwrap_err(), &AuditError::InvalidSegmentId);
     }
 }
 
@@ -350,11 +313,7 @@ fn test_zero_length_segment_consistently_rejected() {
 fn test_witness_initialization_and_increment() {
     let (log, _segment) = setup_basic_log();
 
-    assert_eq!(
-        log.witness_count(),
-        0,
-        "New log should have zero witnesses"
-    );
+    assert_eq!(log.witness_count(), 0, "New log should have zero witnesses");
 }
 
 // ============================================================================
@@ -426,8 +385,7 @@ fn test_initialization_constraints_independent_of_content() {
     ];
 
     for segment_label in segments {
-        let segment = LogSegmentId::new(segment_label)
-            .expect("Valid segment identifier");
+        let segment = LogSegmentId::new(segment_label).expect("Valid segment identifier");
         let log = MerkleLog::new(segment);
 
         assert_eq!(log.len(), 0);
@@ -472,9 +430,7 @@ fn test_initialized_log_produces_valid_proofs() {
     log.publish_root(1_700_000_000);
 
     // Generate inclusion proof
-    let proof = log
-        .inclusion_proof(seq)
-        .expect("Proof should be generated");
+    let proof = log.inclusion_proof(seq).expect("Proof should be generated");
 
     let root = log.current_root();
     proof.verify(&root).expect("Proof should verify");
